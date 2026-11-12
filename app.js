@@ -270,21 +270,24 @@
           const row = Math.floor(idx / cols);
           const tx = (col - 2) * 260;
           const ty = (row - 1) * 250;
-          g.vx += (tx - g.x) * 0.044 * calmFactor;
-          g.vy += (ty - g.y) * 0.044 * calmFactor;
+          g.vx += (tx - g.x) * 0.052 * calmFactor;
+          g.vy += (ty - g.y) * 0.052 * calmFactor;
         });
         conceptNodes.forEach((c, idx) => {
           const angle = (idx / conceptNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 560;
           const ty = Math.sin(angle) * 420;
-          c.vx += (tx - c.x) * 0.030 * calmFactor;
-          c.vy += (ty - c.y) * 0.030 * calmFactor;
+          c.vx += (tx - c.x) * 0.036 * calmFactor;
+          c.vy += (ty - c.y) * 0.036 * calmFactor;
         });
-        resourceNodes.forEach((r) => {
+        resourceNodes.forEach((r, idx) => {
           const g = nodeMap.get(r.groups[0]);
           if (g) {
-            r.vx += (g.x - r.x) * 0.036 * calmFactor;
-            r.vy += (g.y - r.y) * 0.036 * calmFactor;
+            const angle = ((idx * 137.5) % 360) * (Math.PI / 180);
+            const tx = g.x + Math.cos(angle) * 48;
+            const ty = g.y + Math.sin(angle) * 48;
+            r.vx += (tx - r.x) * 0.044 * calmFactor;
+            r.vy += (ty - r.y) * 0.044 * calmFactor;
           }
         });
       } else if (layoutMode === 'concepts') {
@@ -292,24 +295,27 @@
         conceptNodes.forEach((c, idx) => {
           const col = idx % cols;
           const row = Math.floor(idx / cols);
-          const tx = (col - 2) * 260;
-          const ty = (row - 0.5) * 280;
-          c.vx += (tx - c.x) * 0.044 * calmFactor;
-          c.vy += (ty - c.y) * 0.044 * calmFactor;
+          const tx = (col - 2) * 270;
+          const ty = (row - 0.5) * 290;
+          c.vx += (tx - c.x) * 0.052 * calmFactor;
+          c.vy += (ty - c.y) * 0.052 * calmFactor;
         });
         groupNodes.forEach((g, idx) => {
           const angle = (idx / groupNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 580;
           const ty = Math.sin(angle) * 430;
-          g.vx += (tx - g.x) * 0.030 * calmFactor;
-          g.vy += (ty - c.y) * 0.030 * calmFactor;
+          g.vx += (tx - g.x) * 0.036 * calmFactor;
+          g.vy += (ty - g.y) * 0.036 * calmFactor;
         });
-        resourceNodes.forEach(r => {
+        resourceNodes.forEach((r, idx) => {
           if (r.concepts && r.concepts.length > 0) {
             const c = nodeMap.get(r.concepts[0]);
             if (c) {
-              r.vx += (c.x - r.x) * 0.036 * calmFactor;
-              r.vy += (c.y - r.y) * 0.036 * calmFactor;
+              const angle = ((idx * 137.5) % 360) * (Math.PI / 180);
+              const tx = c.x + Math.cos(angle) * 52;
+              const ty = c.y + Math.sin(angle) * 52;
+              r.vx += (tx - r.x) * 0.044 * calmFactor;
+              r.vy += (ty - r.y) * 0.044 * calmFactor;
             }
           }
         });
@@ -524,10 +530,18 @@
             ctx.lineWidth = 2.0 / safeScale;
             ctx.setLineDash(e.edgeType === 'has-concept' ? [5, 4] : []);
           } else {
-            const baseAlpha = (focusNode || hasPath || sidebarHoveredNode || (searchActive && !sMatch)) ? 0.05 : (e.edgeType === 'in-group' ? 0.28 : 0.16);
+            let defaultEdgeAlpha;
+            if (layoutMode === 'concepts') {
+              defaultEdgeAlpha = e.edgeType === 'has-concept' ? 0.34 : 0.08;
+            } else if (layoutMode === 'groups') {
+              defaultEdgeAlpha = e.edgeType === 'in-group' ? 0.34 : 0.08;
+            } else {
+              defaultEdgeAlpha = e.edgeType === 'in-group' ? 0.28 : 0.16;
+            }
+            const baseAlpha = (focusNode || hasPath || sidebarHoveredNode || (searchActive && !sMatch)) ? 0.05 : defaultEdgeAlpha;
             ctx.strokeStyle = e.edgeType === 'in-group' ? `rgba(148, 163, 184, ${baseAlpha})` : `rgba(167, 139, 250, ${baseAlpha})`;
-            ctx.lineWidth = 1.0 / safeScale;
-            ctx.setLineDash([]);
+            ctx.lineWidth = (layoutMode === 'concepts' && e.edgeType === 'has-concept') ? (1.35 / safeScale) : (1.0 / safeScale);
+            ctx.setLineDash((layoutMode === 'concepts' && e.edgeType === 'has-concept') ? [5, 4] : []);
           }
           ctx.stroke();
           ctx.globalAlpha = 1.0;
@@ -554,7 +568,9 @@
         });
         ctx.setLineDash([]);
 
-        const order = { resource: 1, concept: 2, group: 3 };
+        const order = layoutMode === 'concepts'
+          ? { resource: 1, group: 2, concept: 3 }
+          : { resource: 1, concept: 2, group: 3 };
         const sortedNodes = GRAPH_DATA.nodes.filter(isNodeVisible).sort((a, b) => order[a.nodeType] - order[b.nodeType]);
 
         sortedNodes.forEach(n => {
@@ -1157,8 +1173,8 @@
     document.querySelectorAll('.layout-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         layoutMode = btn.dataset.layout;
-        alpha = 0.70;
-        if (autoFitMode !== 'node') autoFitMode = 'all';
+        zoomTo100PercentFill(false);
+        alpha = 0.85;
         document.querySelectorAll('.layout-btn').forEach(b => {
           const active = b === btn;
           b.className = active
