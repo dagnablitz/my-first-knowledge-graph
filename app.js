@@ -61,7 +61,7 @@
     let isPanning = false;
     let panStartX = 0, panStartY = 0;
     let pointerDownPos = { x: 0, y: 0 };
-    let alpha = 1.0;
+    let alpha = 0.35;
     let tickCount = 0;
 
     function initPositions() {
@@ -186,7 +186,7 @@
       highlightedPathNodes.clear();
       highlightedPathEdges.clear();
       autoFitMode = 'all';
-      alpha = Math.max(alpha, 0.35);
+      alpha = Math.max(alpha, 0.16);
       updateDynamicCameraTargets();
       if (instant) {
         camX = targetCamX;
@@ -245,22 +245,24 @@
     function stepPhysics() {
       tickCount++;
 
-      // Smoothly interpolate camera toward target (dynamic zoom-to-fill)
+      // Smoothly and slowly interpolate camera toward target (deliberate, calming zoom & pan)
       updateDynamicCameraTargets();
       if (!isPanning) {
-        const ease = 0.16;
+        const ease = 0.042;
         camX += (targetCamX - camX) * ease;
         camY += (targetCamY - camY) * ease;
         camScale += (targetCamScale - camScale) * ease;
         if (tickCount % 4 === 0) updateZoomReadout();
       }
 
-      if (alpha < 0.005 && !draggedNode) return;
-      alpha = Math.max(0.004, alpha * 0.992);
+      if (alpha < 0.001 && !draggedNode) return;
+      alpha = alpha * 0.978;
+      if (alpha < 0.001) alpha = 0;
 
       const visibleNodes = GRAPH_DATA.nodes.filter(isNodeVisible);
+      const calmFactor = Math.max(0.15, alpha);
 
-      // 1. Layout anchor forces
+      // 1. Gentle layout anchor forces
       if (layoutMode === 'groups') {
         const cols = 5;
         groupNodes.forEach((g, idx) => {
@@ -268,21 +270,21 @@
           const row = Math.floor(idx / cols);
           const tx = (col - 2) * 260;
           const ty = (row - 1) * 250;
-          g.vx += (tx - g.x) * 0.08;
-          g.vy += (ty - g.y) * 0.08;
+          g.vx += (tx - g.x) * 0.022 * calmFactor;
+          g.vy += (ty - g.y) * 0.022 * calmFactor;
         });
         conceptNodes.forEach((c, idx) => {
           const angle = (idx / conceptNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 560;
           const ty = Math.sin(angle) * 420;
-          c.vx += (tx - c.x) * 0.05;
-          c.vy += (ty - c.y) * 0.05;
+          c.vx += (tx - c.x) * 0.015 * calmFactor;
+          c.vy += (ty - c.y) * 0.015 * calmFactor;
         });
         resourceNodes.forEach((r) => {
           const g = nodeMap.get(r.groups[0]);
           if (g) {
-            r.vx += (g.x - r.x) * 0.06;
-            r.vy += (g.y - r.y) * 0.06;
+            r.vx += (g.x - r.x) * 0.018 * calmFactor;
+            r.vy += (g.y - r.y) * 0.018 * calmFactor;
           }
         });
       } else if (layoutMode === 'concepts') {
@@ -292,22 +294,22 @@
           const row = Math.floor(idx / cols);
           const tx = (col - 2) * 260;
           const ty = (row - 0.5) * 280;
-          c.vx += (tx - c.x) * 0.08;
-          c.vy += (ty - c.y) * 0.08;
+          c.vx += (tx - c.x) * 0.022 * calmFactor;
+          c.vy += (ty - c.y) * 0.022 * calmFactor;
         });
         groupNodes.forEach((g, idx) => {
           const angle = (idx / groupNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 580;
           const ty = Math.sin(angle) * 430;
-          g.vx += (tx - g.x) * 0.05;
-          g.vy += (ty - g.y) * 0.05;
+          g.vx += (tx - g.x) * 0.015 * calmFactor;
+          g.vy += (ty - c.y) * 0.015 * calmFactor;
         });
         resourceNodes.forEach(r => {
           if (r.concepts && r.concepts.length > 0) {
             const c = nodeMap.get(r.concepts[0]);
             if (c) {
-              r.vx += (c.x - r.x) * 0.065;
-              r.vy += (c.y - r.y) * 0.065;
+              r.vx += (c.x - r.x) * 0.018 * calmFactor;
+              r.vy += (c.y - r.y) * 0.018 * calmFactor;
             }
           }
         });
@@ -316,20 +318,20 @@
           const angle = (i / groupNodes.length) * Math.PI * 2 - Math.PI / 2;
           const tx = Math.cos(angle) * 350;
           const ty = Math.sin(angle) * 350;
-          g.vx += (tx - g.x) * 0.015;
-          g.vy += (ty - g.y) * 0.015;
+          g.vx += (tx - g.x) * 0.007 * calmFactor;
+          g.vy += (ty - g.y) * 0.007 * calmFactor;
         });
         conceptNodes.forEach((c, i) => {
           const angle = (i / conceptNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 140;
           const ty = Math.sin(angle) * 140;
-          c.vx += (tx - c.x) * 0.018;
-          c.vy += (ty - c.y) * 0.018;
+          c.vx += (tx - c.x) * 0.008 * calmFactor;
+          c.vy += (ty - c.y) * 0.008 * calmFactor;
         });
       }
 
-      // Focused satellite orbit: when a Tab Group or Concept Bridge hub is selected, gently gather its
-      // 1-hop resource links around it into a clean, readable screen-filling constellation!
+      // Focused satellite orbit: when a Tab Group or Concept Bridge hub is selected, slowly and gently
+      // guide its 1-hop resource links into a calm, readable constellation around it.
       if (selectedNode && autoFitMode === 'node' && (selectedNode.nodeType === 'group' || selectedNode.nodeType === 'concept')) {
         const nbIds = Array.from(neighborsMap.get(selectedNode.id) || []);
         const resourceNbIds = nbIds.filter(id => {
@@ -343,12 +345,12 @@
           const angle = (i / Math.max(1, resourceNbIds.length)) * Math.PI * 2 - Math.PI / 2;
           const tx = selectedNode.x + Math.cos(angle) * orbitRadius;
           const ty = selectedNode.y + Math.sin(angle) * orbitRadius;
-          nb.vx += (tx - nb.x) * 0.14;
-          nb.vy += (ty - nb.y) * 0.14;
+          nb.vx += (tx - nb.x) * 0.032 * calmFactor;
+          nb.vy += (ty - nb.y) * 0.032 * calmFactor;
         });
       }
 
-      // 2. Pairwise repulsion among visible nodes (with singularity guard)
+      // 2. Gentle pairwise repulsion among visible nodes (with singularity guard)
       const nLen = visibleNodes.length;
       for (let i = 0; i < nLen; i++) {
         const a = visibleNodes[i];
@@ -366,8 +368,8 @@
           const minDist = a.radius + b.radius + 14;
           if (d2 < 18000) {
             const d = Math.sqrt(d2);
-            const rep = (a.nodeType !== 'resource' && b.nodeType !== 'resource') ? 1600 : 260;
-            const effD2 = Math.max(196, d2);
+            const rep = (a.nodeType !== 'resource' && b.nodeType !== 'resource') ? 680 : 110;
+            const effD2 = Math.max(320, d2);
             const force = (rep * alpha) / effD2;
             const fx = (dx / d) * force;
             const fy = (dy / d) * force;
@@ -378,7 +380,7 @@
           }
           if (d2 < minDist * minDist) {
             const d = Math.sqrt(d2);
-            const overlap = (minDist - d) * 0.25;
+            const overlap = (minDist - d) * 0.065 * calmFactor;
             const ox = (dx / d) * overlap;
             const oy = (dy / d) * overlap;
             a.vx -= ox;
@@ -389,7 +391,7 @@
         }
       }
 
-      // 3. Edge spring forces
+      // 3. Soft edge spring forces
       edges.forEach(e => {
         const s = e.sourceNode;
         const t = e.targetNode;
@@ -401,7 +403,7 @@
         const dy = t.y - s.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
         const targetDist = e.edgeType === 'in-group' ? 78 : 110;
-        const k = e.edgeType === 'in-group' ? 0.032 : 0.014;
+        const k = e.edgeType === 'in-group' ? 0.010 : 0.0045;
         const f = (d - targetDist) * k * alpha;
         const fx = (dx / d) * f;
         const fy = (dy / d) * f;
@@ -411,8 +413,8 @@
         t.vy -= fy;
       });
 
-      // 4. Integrate velocity (clamped to prevent any numeric explosion)
-      const maxV = 28;
+      // 4. Integrate velocity with high damping & low speed cap for calm, deliberate motion
+      const maxV = 3.2;
       const maxPos = 1200;
       visibleNodes.forEach(n => {
         if (n === draggedNode || (n === selectedNode && autoFitMode === 'node')) {
@@ -420,8 +422,10 @@
           n.vy = 0;
           return;
         }
-        n.vx = Math.max(-maxV, Math.min(maxV, (n.vx || 0) * 0.80));
-        n.vy = Math.max(-maxV, Math.min(maxV, (n.vy || 0) * 0.80));
+        n.vx = Math.max(-maxV, Math.min(maxV, (n.vx || 0) * 0.68));
+        n.vy = Math.max(-maxV, Math.min(maxV, (n.vy || 0) * 0.68));
+        if (Math.abs(n.vx) < 0.012) n.vx = 0;
+        if (Math.abs(n.vy) < 0.012) n.vy = 0;
         n.x = Math.max(-maxPos, Math.min(maxPos, (n.x || 0) + n.vx));
         n.y = Math.max(-maxPos, Math.min(maxPos, (n.y || 0) + n.vy));
         if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) {
@@ -472,6 +476,7 @@
 
       ctx.save();
       try {
+        const timeSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
         const safeScale = Number.isFinite(camScale) && camScale > 0.02 ? camScale : 1;
         const safeCamX = Number.isFinite(camX) ? camX : 0;
         const safeCamY = Number.isFinite(camY) ? camY : 0;
@@ -506,7 +511,7 @@
 
           if (isSidebarHoverEdge) {
             ctx.strokeStyle = '#22D3EE';
-            ctx.lineWidth = 4.2 / safeScale;
+            ctx.lineWidth = 3.6 / safeScale;
             ctx.setLineDash([]);
           } else if (isPathEdge) {
             ctx.strokeStyle = '#F59E0B';
@@ -528,22 +533,22 @@
           ctx.globalAlpha = 1.0;
 
           if (isSidebarHoverEdge) {
-            for (let b = 0; b < 2; b++) {
-              const tPulse = ((tickCount * 0.032 + b * 0.5) % 1);
-              const px = s.x + (t.x - s.x) * tPulse;
-              const py = s.y + (t.y - s.y) * tPulse;
-              ctx.beginPath();
-              ctx.arc(px, py, 5 / safeScale, 0, Math.PI * 2);
-              ctx.fillStyle = '#FDE047';
-              ctx.fill();
-            }
-          } else if (isHighlighted && !sidebarHoveredNode) {
-            const tPulse = ((tickCount * 0.015 + (idx % 7) * 0.14) % 1);
+            // Single slow, calming light particle gliding along the edge (4.5s per traversal)
+            const tPulse = (timeSec * 0.22) % 1;
             const px = s.x + (t.x - s.x) * tPulse;
             const py = s.y + (t.y - s.y) * tPulse;
             ctx.beginPath();
-            ctx.arc(px, py, 3 / safeScale, 0, Math.PI * 2);
-            ctx.fillStyle = isPathEdge ? '#FBBF24' : '#FFFFFF';
+            ctx.arc(px, py, 4.5 / safeScale, 0, Math.PI * 2);
+            ctx.fillStyle = '#FDE047';
+            ctx.fill();
+          } else if (isHighlighted && !sidebarHoveredNode) {
+            // Very slow, tranquil drift along highlighted edges (~6.7s per traversal)
+            const tPulse = (timeSec * 0.15 + (idx % 7) * 0.14) % 1;
+            const px = s.x + (t.x - s.x) * tPulse;
+            const py = s.y + (t.y - s.y) * tPulse;
+            ctx.beginPath();
+            ctx.arc(px, py, 2.8 / safeScale, 0, Math.PI * 2);
+            ctx.fillStyle = isPathEdge ? '#FBBF24' : 'rgba(255, 255, 255, 0.85)';
             ctx.fill();
           }
         });
@@ -639,24 +644,26 @@
           const sn = sidebarHoveredNode;
           ctx.globalAlpha = 1.0;
 
-          // 1. Dual expanding radar/sonar rings
+          // 1. Slow, calming dual ripples (5.5-second cycle with smooth sine fade-in/out)
           for (let ring = 0; ring < 2; ring++) {
-            const phase = ((tickCount * 0.03 + ring * 0.5) % 1);
-            const ringR = sn.radius * 1.8 + phase * 30;
+            const phase = (timeSec * 0.18 + ring * 0.5) % 1;
+            const easedPhase = Math.sin(phase * Math.PI * 0.5);
+            const ringR = sn.radius * 1.6 + easedPhase * 26;
+            const ringAlpha = Math.sin(phase * Math.PI) * 0.72;
             ctx.beginPath();
             ctx.arc(sn.x, sn.y, ringR, 0, Math.PI * 2);
             ctx.strokeStyle = ring === 0
-              ? `rgba(34, 211, 238, ${(1 - phase) * 0.95})`
-              : `rgba(250, 204, 21, ${(1 - phase) * 0.95})`;
-            ctx.lineWidth = 3 / safeScale;
+              ? `rgba(34, 211, 238, ${ringAlpha})`
+              : `rgba(250, 204, 21, ${ringAlpha})`;
+            ctx.lineWidth = 2.5 / safeScale;
             ctx.stroke();
           }
 
-          // 2. Intense neon outer glow aura
-          const glowR = sn.radius * 2.9 + Math.sin(tickCount * 0.14) * 3;
+          // 2. Soft, meditative breathing glow aura (~5-second breath cycle)
+          const glowR = sn.radius * 2.8 + Math.sin(timeSec * 1.25) * 2.0;
           const grad = ctx.createRadialGradient(sn.x, sn.y, sn.radius * 0.4, sn.x, sn.y, glowR);
-          grad.addColorStop(0, 'rgba(250, 204, 21, 0.95)');
-          grad.addColorStop(0.55, 'rgba(34, 211, 238, 0.55)');
+          grad.addColorStop(0, 'rgba(250, 204, 21, 0.90)');
+          grad.addColorStop(0.55, 'rgba(34, 211, 238, 0.48)');
           grad.addColorStop(1, 'rgba(34, 211, 238, 0)');
           ctx.beginPath();
           ctx.arc(sn.x, sn.y, glowR, 0, Math.PI * 2);
@@ -664,7 +671,7 @@
           ctx.fill();
 
           // 3. Enlarged high-contrast node body (color-shifted to electric yellow + cyan ring + white core)
-          const beaconR = Math.max(13, sn.radius * 1.95);
+          const beaconR = Math.max(13, sn.radius * 1.9);
           if (sn.nodeType === 'concept') {
             drawDiamond(sn.x, sn.y, beaconR);
           } else {
@@ -673,7 +680,7 @@
           }
           ctx.fillStyle = '#FACC15';
           ctx.fill();
-          ctx.lineWidth = 3.5 / safeScale;
+          ctx.lineWidth = 3.2 / safeScale;
           ctx.strokeStyle = '#22D3EE';
           ctx.stroke();
 
@@ -682,7 +689,7 @@
           ctx.fillStyle = '#FFFFFF';
           ctx.fill();
 
-          // 4. High-contrast callout pill badge above/below the glowing node
+          // 4. High-contrast callout pill badge below the glowing node
           const fontSize = 13;
           ctx.font = `800 ${fontSize}px sans-serif`;
           ctx.textAlign = 'center';
@@ -773,7 +780,7 @@
       const hit = getNodeAtScreen(sx, sy);
       if (hit) {
         draggedNode = hit;
-        alpha = Math.max(alpha, 0.35);
+        alpha = Math.max(alpha, 0.18);
       } else {
         isPanning = true;
         panStartX = sx;
@@ -789,7 +796,7 @@
         const w = screenToWorld(sx, sy);
         draggedNode.x = w.x;
         draggedNode.y = w.y;
-        alpha = Math.max(alpha, 0.25);
+        alpha = Math.max(alpha, 0.16);
       } else if (isPanning) {
         const dx = sx - panStartX;
         const dy = sy - panStartY;
@@ -821,7 +828,7 @@
         if (pathStartNode && hit && hit.id !== pathStartNode.id) {
           const path = computeShortestPath(pathStartNode.id, hit.id);
           autoFitMode = 'path';
-          alpha = Math.max(alpha, 0.4);
+          alpha = Math.max(alpha, 0.22);
           updateDynamicCameraTargets();
           document.getElementById('pathfinder-banner').classList.remove('hidden');
           const labels = path.map(id => nodeMap.get(id).label).join(' → ');
@@ -842,9 +849,8 @@
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       autoFitMode = 'manual';
-      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
-      camScale = Math.min(3.8, Math.max(0.18, camScale * zoomFactor));
-      targetCamScale = camScale;
+      const zoomFactor = e.deltaY < 0 ? 1.07 : 0.93;
+      targetCamScale = Math.min(3.8, Math.max(0.18, targetCamScale * zoomFactor));
       targetCamX = camX;
       targetCamY = camY;
       updateZoomReadout();
@@ -874,7 +880,7 @@
       }
       selectedNode = n;
       autoFitMode = 'node';
-      alpha = Math.max(alpha, 0.65);
+      alpha = Math.max(alpha, 0.25);
       updateDynamicCameraTargets();
       updateSelectionUI(n);
       updateZoomReadout();
@@ -1151,7 +1157,7 @@
     document.querySelectorAll('.layout-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         layoutMode = btn.dataset.layout;
-        alpha = 0.9;
+        alpha = 0.45;
         if (autoFitMode !== 'node') autoFitMode = 'all';
         document.querySelectorAll('.layout-btn').forEach(b => {
           const active = b === btn;
@@ -1165,16 +1171,16 @@
     document.getElementById('btn-toggle-links').addEventListener('click', (e) => {
       showAllLinks = !showAllLinks;
       e.currentTarget.textContent = showAllLinks ? 'View: All Nodes' : 'View: Hubs + Selected';
-      alpha = 0.75;
+      alpha = 0.35;
       updateDynamicCameraTargets();
     });
 
     document.getElementById('btn-boing').addEventListener('click', () => {
       GRAPH_DATA.nodes.forEach(n => {
-        n.vx += (Math.random() - 0.5) * 28;
-        n.vy += (Math.random() - 0.5) * 28;
+        n.vx += (Math.random() - 0.5) * 3.5;
+        n.vy += (Math.random() - 0.5) * 3.5;
       });
-      alpha = 1.0;
+      alpha = 0.40;
     });
 
     document.getElementById('btn-fit-100').addEventListener('click', () => zoomTo100PercentFill(false));
@@ -1198,8 +1204,7 @@
 
     document.getElementById('btn-zoom-in').addEventListener('click', () => {
       autoFitMode = 'manual';
-      camScale = Math.min(3.8, camScale * 1.25);
-      targetCamScale = camScale;
+      targetCamScale = Math.min(3.8, targetCamScale * 1.18);
       targetCamX = camX;
       targetCamY = camY;
       updateZoomReadout();
@@ -1207,8 +1212,7 @@
 
     document.getElementById('btn-zoom-out').addEventListener('click', () => {
       autoFitMode = 'manual';
-      camScale = Math.max(0.18, camScale * 0.8);
-      targetCamScale = camScale;
+      targetCamScale = Math.max(0.18, targetCamScale * 0.84);
       targetCamX = camX;
       targetCamY = camY;
       updateZoomReadout();
