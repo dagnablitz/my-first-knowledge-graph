@@ -42,10 +42,10 @@
 
     let layoutMode = 'force';
     let showAllLinks = true;
-    let activeRType = 'ALL';
     let searchQuery = '';
     let selectedNode = null;
     let hoveredNode = null;
+    let sidebarHoveredNode = null;
     let draggedNode = null;
     let pathStartNode = null;
     let highlightedPathNodes = new Set();
@@ -96,12 +96,6 @@
         if (!selectedNode) return false;
         if (selectedNode.id === n.id) return true;
         return neighborsMap.get(selectedNode.id).has(n.id);
-      }
-      if (activeRType === 'BRIDGE_ONLY') {
-        return n.groups && n.groups.length > 1;
-      }
-      if (activeRType !== 'ALL' && n.resourceType !== activeRType) {
-        return false;
       }
       return true;
     }
@@ -183,6 +177,7 @@
 
     function zoomTo100PercentFill(instant = false) {
       selectedNode = null;
+      sidebarHoveredNode = null;
       pathStartNode = null;
       highlightedPathNodes.clear();
       highlightedPathEdges.clear();
@@ -200,17 +195,13 @@
 
     function updateZoomReadout() {
       const readout = document.getElementById('zoom-readout');
-      const floatingWrap = document.getElementById('floating-zoom-out-wrap');
       const relativePct = Math.round((camScale / (baselineAllScale || 1)) * 100);
       if (autoFitMode === 'all') {
         readout.textContent = '100% Fill';
-        floatingWrap.classList.add('hidden');
       } else if (autoFitMode === 'node' && selectedNode) {
         readout.textContent = `Node Fill (${relativePct}%)`;
-        floatingWrap.classList.remove('hidden');
       } else {
         readout.textContent = `${relativePct}%`;
-        floatingWrap.classList.remove('hidden');
       }
     }
 
@@ -459,7 +450,11 @@
         if (!isNodeVisible(s) || !isNodeVisible(t)) return;
 
         const isPathEdge = highlightedPathEdges.has(idx);
-        const isHighlighted = isPathEdge || (focusNode && (s.id === focusNode.id || t.id === focusNode.id));
+        const isSidebarHoverEdge = sidebarHoveredNode && (
+          (selectedNode && ((s.id === selectedNode.id && t.id === sidebarHoveredNode.id) || (t.id === selectedNode.id && s.id === sidebarHoveredNode.id))) ||
+          (!selectedNode && (s.id === sidebarHoveredNode.id || t.id === sidebarHoveredNode.id))
+        );
+        const isHighlighted = isPathEdge || isSidebarHoverEdge || (focusNode && (s.id === focusNode.id || t.id === focusNode.id));
         const searchActive = searchQuery.length > 0;
         const sMatch = matchesSearch(s) && matchesSearch(t);
 
@@ -467,23 +462,40 @@
         ctx.moveTo(s.x, s.y);
         ctx.lineTo(t.x, t.y);
 
-        if (isPathEdge) {
+        if (isSidebarHoverEdge) {
+          ctx.strokeStyle = '#22D3EE';
+          ctx.lineWidth = 4.2 / camScale;
+          ctx.setLineDash([]);
+        } else if (isPathEdge) {
           ctx.strokeStyle = '#F59E0B';
           ctx.lineWidth = 3.2 / camScale;
           ctx.setLineDash([]);
         } else if (isHighlighted) {
+          const dimOtherEdges = sidebarHoveredNode ? 0.35 : 1.0;
+          ctx.globalAlpha = dimOtherEdges;
           ctx.strokeStyle = e.edgeType === 'in-group' ? s.color : t.color;
           ctx.lineWidth = 2.0 / camScale;
           ctx.setLineDash(e.edgeType === 'has-concept' ? [5, 4] : []);
         } else {
-          const baseAlpha = (focusNode || hasPath || (searchActive && !sMatch)) ? 0.05 : (e.edgeType === 'in-group' ? 0.28 : 0.16);
+          const baseAlpha = (focusNode || hasPath || sidebarHoveredNode || (searchActive && !sMatch)) ? 0.05 : (e.edgeType === 'in-group' ? 0.28 : 0.16);
           ctx.strokeStyle = e.edgeType === 'in-group' ? `rgba(148, 163, 184, ${baseAlpha})` : `rgba(167, 139, 250, ${baseAlpha})`;
           ctx.lineWidth = 1.0 / camScale;
           ctx.setLineDash([]);
         }
         ctx.stroke();
+        ctx.globalAlpha = 1.0;
 
-        if (isHighlighted) {
+        if (isSidebarHoverEdge) {
+          for (let b = 0; b < 2; b++) {
+            const tPulse = ((tickCount * 0.032 + b * 0.5) % 1);
+            const px = s.x + (t.x - s.x) * tPulse;
+            const py = s.y + (t.y - s.y) * tPulse;
+            ctx.beginPath();
+            ctx.arc(px, py, 5 / camScale, 0, Math.PI * 2);
+            ctx.fillStyle = '#FDE047';
+            ctx.fill();
+          }
+        } else if (isHighlighted && !sidebarHoveredNode) {
           const tPulse = ((tickCount * 0.015 + (idx % 7) * 0.14) % 1);
           const px = s.x + (t.x - s.x) * tPulse;
           const py = s.y + (t.y - s.y) * tPulse;
@@ -499,6 +511,7 @@
       const sortedNodes = GRAPH_DATA.nodes.filter(isNodeVisible).sort((a, b) => order[a.nodeType] - order[b.nodeType]);
 
       sortedNodes.forEach(n => {
+        const isSidebarTarget = sidebarHoveredNode && sidebarHoveredNode.id === n.id;
         const isFocus = focusNode && focusNode.id === n.id;
         const isNeighbor = focusNeighbors && focusNeighbors.has(n.id);
         const isPathNode = highlightedPathNodes.has(n.id);
@@ -509,7 +522,12 @@
         else if (focusNode && !isFocus && !isNeighbor) dim = true;
         if (searchQuery && !isMatch) dim = true;
 
-        ctx.globalAlpha = dim ? 0.14 : 1.0;
+        // When hovering over a link in the right panel, dim all other sibling link nodes so the hovered node pops out immediately
+        if (sidebarHoveredNode && !isSidebarTarget && !isFocus) {
+          ctx.globalAlpha = dim ? 0.08 : 0.28;
+        } else {
+          ctx.globalAlpha = dim ? 0.14 : 1.0;
+        }
 
         if (isFocus || isPathNode || (searchQuery && isMatch) || (n.groups && n.groups.length > 1 && !dim)) {
           ctx.beginPath();
@@ -545,14 +563,16 @@
         }
 
         const showLabel =
-          n.nodeType === 'group' ||
-          n.nodeType === 'concept' ||
-          isFocus ||
-          isNeighbor ||
-          isPathNode ||
-          (searchQuery && isMatch) ||
-          camScale > 1.35 ||
-          (n.groups && n.groups.length > 1);
+          !isSidebarTarget && (
+            n.nodeType === 'group' ||
+            n.nodeType === 'concept' ||
+            isFocus ||
+            isNeighbor ||
+            isPathNode ||
+            (searchQuery && isMatch) ||
+            camScale > 1.35 ||
+            (n.groups && n.groups.length > 1)
+          );
 
         if (showLabel) {
           const fontSize = n.nodeType === 'group' ? 12 : (n.nodeType === 'concept' ? 11 : 10);
@@ -572,6 +592,76 @@
           ctx.fillText(text, n.x, labelY);
         }
       });
+
+      // Draw Attention Beacon on top of everything when hovering a link/node in the right panel
+      if (sidebarHoveredNode && isNodeVisible(sidebarHoveredNode)) {
+        const sn = sidebarHoveredNode;
+        ctx.globalAlpha = 1.0;
+
+        // 1. Dual expanding radar/sonar rings
+        for (let ring = 0; ring < 2; ring++) {
+          const phase = ((tickCount * 0.03 + ring * 0.5) % 1);
+          const ringR = sn.radius * 1.8 + phase * 30;
+          ctx.beginPath();
+          ctx.arc(sn.x, sn.y, ringR, 0, Math.PI * 2);
+          ctx.strokeStyle = ring === 0
+            ? `rgba(34, 211, 238, ${(1 - phase) * 0.95})`
+            : `rgba(250, 204, 21, ${(1 - phase) * 0.95})`;
+          ctx.lineWidth = 3 / camScale;
+          ctx.stroke();
+        }
+
+        // 2. Intense neon outer glow aura
+        const glowR = sn.radius * 2.9 + Math.sin(tickCount * 0.14) * 3;
+        const grad = ctx.createRadialGradient(sn.x, sn.y, sn.radius * 0.4, sn.x, sn.y, glowR);
+        grad.addColorStop(0, 'rgba(250, 204, 21, 0.95)');
+        grad.addColorStop(0.55, 'rgba(34, 211, 238, 0.55)');
+        grad.addColorStop(1, 'rgba(34, 211, 238, 0)');
+        ctx.beginPath();
+        ctx.arc(sn.x, sn.y, glowR, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // 3. Enlarged high-contrast node body (color-shifted to electric yellow + cyan ring + white core)
+        const beaconR = Math.max(13, sn.radius * 1.95);
+        if (sn.nodeType === 'concept') {
+          drawDiamond(sn.x, sn.y, beaconR);
+        } else {
+          ctx.beginPath();
+          ctx.arc(sn.x, sn.y, beaconR, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = '#FACC15';
+        ctx.fill();
+        ctx.lineWidth = 3.5 / camScale;
+        ctx.strokeStyle = '#22D3EE';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(sn.x, sn.y, beaconR * 0.42, 0, Math.PI * 2);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fill();
+
+        // 4. High-contrast callout pill badge above/below the glowing node
+        const fontSize = 13;
+        ctx.font = `800 ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const labelText = `★ ${sn.label}`;
+        const metrics = ctx.measureText(labelText);
+        const padX = 8, padY = 4;
+        const labelY = sn.y + beaconR + 7;
+
+        ctx.fillStyle = '#FACC15';
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2 / camScale;
+        ctx.beginPath();
+        ctx.roundRect(sn.x - metrics.width / 2 - padX, labelY - padY, metrics.width + padX * 2, fontSize + padY * 2, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText(labelText, sn.x, labelY);
+      }
 
       ctx.globalAlpha = 1.0;
       ctx.restore();
@@ -710,7 +800,24 @@
       updateZoomReadout();
     }, { passive: false });
 
+    function bindSidebarHover(el, targetNode) {
+      if (!el || !targetNode) return;
+      el.addEventListener('pointerenter', () => {
+        sidebarHoveredNode = targetNode;
+      });
+      el.addEventListener('pointerleave', () => {
+        if (sidebarHoveredNode === targetNode) sidebarHoveredNode = null;
+      });
+      el.addEventListener('focus', () => {
+        sidebarHoveredNode = targetNode;
+      });
+      el.addEventListener('blur', () => {
+        if (sidebarHoveredNode === targetNode) sidebarHoveredNode = null;
+      });
+    }
+
     function selectAndZoomNode(n) {
+      sidebarHoveredNode = null;
       if (!n) {
         zoomTo100PercentFill(false);
         return;
@@ -742,6 +849,7 @@
           <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--background)] text-[var(--muted-foreground)] font-mono">${g.tabCount}</span>
         `;
         btn.addEventListener('click', () => selectAndZoomNode(g));
+        bindSidebarHover(btn, g);
         li.appendChild(btn);
         gList.appendChild(li);
       });
@@ -759,12 +867,14 @@
           <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--background)] text-[var(--muted-foreground)] font-mono">${c.linkCount}</span>
         `;
         btn.addEventListener('click', () => selectAndZoomNode(c));
+        bindSidebarHover(btn, c);
         li.appendChild(btn);
         cList.appendChild(li);
       });
     }
 
     function updateSelectionUI(n) {
+      sidebarHoveredNode = null;
       highlightedPathNodes.clear();
       highlightedPathEdges.clear();
       document.getElementById('pathfinder-banner').classList.add('hidden');
@@ -827,10 +937,11 @@
           const li = document.createElement('li');
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.className = 'text-left text-amber-400 hover:underline cursor-pointer font-medium block truncate w-full';
+          btn.className = 'text-left text-amber-400 hover:text-yellow-300 hover:underline cursor-pointer font-medium block truncate w-full';
           const gNames = r.groups.map(gid => nodeMap.get(gid).label).join(' + ');
           btn.textContent = `★ ${r.label} (${gNames})`;
           btn.addEventListener('click', () => selectAndZoomNode(r));
+          bindSidebarHover(btn, r);
           li.appendChild(btn);
           bUl.appendChild(li);
         });
@@ -936,11 +1047,12 @@
         connGroups.forEach(g => {
           const b = document.createElement('button');
           b.type = 'button';
-          b.className = 'px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors';
+          b.className = 'px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors hover:bg-yellow-500/15';
           b.style.borderColor = g.color;
           b.style.color = g.color;
           b.textContent = g.label;
           b.addEventListener('click', () => selectAndZoomNode(g));
+          bindSidebarHover(b, g);
           wrap.appendChild(b);
         });
       }
@@ -950,11 +1062,12 @@
         connConcepts.forEach(c => {
           const b = document.createElement('button');
           b.type = 'button';
-          b.className = 'px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer transition-colors';
+          b.className = 'px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer transition-colors hover:bg-yellow-500/15';
           b.style.borderColor = c.color;
           b.style.color = c.color;
           b.textContent = '◆ ' + c.label;
           b.addEventListener('click', () => selectAndZoomNode(c));
+          bindSidebarHover(b, c);
           wrap.appendChild(b);
         });
       }
@@ -963,12 +1076,14 @@
         const ul = document.getElementById('insp-resources');
         connResources.forEach(r => {
           const li = document.createElement('li');
-          li.className = 'p-2 rounded-lg bg-[var(--background)] border border-[var(--border)] flex items-center justify-between gap-2';
+          li.className = 'p-2 rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-yellow-400 hover:bg-yellow-500/10 flex items-center justify-between gap-2 transition-colors group';
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.className = 'text-left font-medium text-[var(--foreground)] hover:text-orange-400 truncate cursor-pointer flex-1';
-          btn.textContent = r.label;
+          btn.className = 'text-left font-medium text-[var(--foreground)] group-hover:text-yellow-300 truncate cursor-pointer flex-1 flex items-center gap-2';
+          btn.innerHTML = `<span class="w-2 h-2 rounded-full shrink-0 transition-transform group-hover:scale-150" style="background:${r.color}"></span><span class="truncate">${r.label}</span>`;
           btn.addEventListener('click', () => selectAndZoomNode(r));
+          bindSidebarHover(li, r);
+          bindSidebarHover(btn, r);
 
           const link = document.createElement('a');
           link.href = r.url;
@@ -997,20 +1112,6 @@
       });
     });
 
-    document.querySelectorAll('.rtype-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activeRType = btn.dataset.rtype;
-        alpha = 0.5;
-        if (autoFitMode === 'all') updateDynamicCameraTargets();
-        document.querySelectorAll('.rtype-btn').forEach(b => {
-          const active = b === btn;
-          b.className = active
-            ? 'rtype-btn px-2.5 py-0.5 text-xs rounded-full bg-orange-500 text-slate-950 font-medium cursor-pointer transition-colors'
-            : 'rtype-btn px-2.5 py-0.5 text-xs rounded-full border border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors';
-        });
-      });
-    });
-
     document.getElementById('btn-toggle-links').addEventListener('click', (e) => {
       showAllLinks = !showAllLinks;
       e.currentTarget.textContent = showAllLinks ? 'View: All Nodes' : 'View: Hubs + Selected';
@@ -1027,7 +1128,6 @@
     });
 
     document.getElementById('btn-fit-100').addEventListener('click', () => zoomTo100PercentFill(false));
-    document.getElementById('btn-floating-fit-100').addEventListener('click', () => zoomTo100PercentFill(false));
     document.getElementById('btn-bottom-fit-100').addEventListener('click', () => zoomTo100PercentFill(false));
     document.getElementById('btn-clear-selection').addEventListener('click', () => zoomTo100PercentFill(false));
 
