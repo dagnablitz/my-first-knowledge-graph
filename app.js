@@ -115,7 +115,10 @@
     function computeCameraFit(nodesToFit, isSingleFocus = false) {
       if (!nodesToFit || nodesToFit.length === 0) return;
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let validCount = 0;
       nodesToFit.forEach(n => {
+        if (!n || !Number.isFinite(n.x) || !Number.isFinite(n.y)) return;
+        validCount++;
         // Account for node radius + label width/height margins so labels never clip off screen
         const labelPadX = isSingleFocus ? 58 : 42;
         const labelPadBottom = isSingleFocus ? 30 : 24;
@@ -125,6 +128,7 @@
         minY = Math.min(minY, n.y - n.radius - labelPadTop);
         maxY = Math.max(maxY, n.y + n.radius + labelPadBottom);
       });
+      if (validCount === 0) return;
 
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
@@ -146,7 +150,7 @@
     }
 
     function updateDynamicCameraTargets() {
-      const allVisible = GRAPH_DATA.nodes.filter(isNodeVisible);
+      const allVisible = GRAPH_DATA.nodes.filter(n => isNodeVisible(n) && Number.isFinite(n.x) && Number.isFinite(n.y));
       // Always track what "100% Fill" scale is for the current canvas dimensions
       if (allVisible.length > 0) {
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -195,6 +199,7 @@
 
     function updateZoomReadout() {
       const readout = document.getElementById('zoom-readout');
+      if (!readout) return;
       const relativePct = Math.round((camScale / (baselineAllScale || 1)) * 100);
       if (autoFitMode === 'all') {
         readout.textContent = '100% Fill';
@@ -323,15 +328,19 @@
         });
       }
 
-      // Focused satellite orbit: when a node is selected, gently gather its 1-hop neighbors around it
-      // so the selected node + its connected nodes form a compact, readable screen-filling constellation!
-      if (selectedNode && autoFitMode === 'node') {
+      // Focused satellite orbit: when a Tab Group or Concept Bridge hub is selected, gently gather its
+      // 1-hop resource links around it into a clean, readable screen-filling constellation!
+      if (selectedNode && autoFitMode === 'node' && (selectedNode.nodeType === 'group' || selectedNode.nodeType === 'concept')) {
         const nbIds = Array.from(neighborsMap.get(selectedNode.id) || []);
-        const orbitRadius = Math.max(68, Math.min(155, 38 + nbIds.length * 4.2));
-        nbIds.forEach((id, i) => {
+        const resourceNbIds = nbIds.filter(id => {
+          const nb = nodeMap.get(id);
+          return nb && nb.nodeType === 'resource';
+        });
+        const orbitRadius = Math.max(76, Math.min(165, 42 + resourceNbIds.length * 4.2));
+        resourceNbIds.forEach((id, i) => {
           const nb = nodeMap.get(id);
           if (!nb || nb === draggedNode) return;
-          const angle = (i / Math.max(1, nbIds.length)) * Math.PI * 2 - Math.PI / 2;
+          const angle = (i / Math.max(1, resourceNbIds.length)) * Math.PI * 2 - Math.PI / 2;
           const tx = selectedNode.x + Math.cos(angle) * orbitRadius;
           const ty = selectedNode.y + Math.sin(angle) * orbitRadius;
           nb.vx += (tx - nb.x) * 0.14;
@@ -339,7 +348,7 @@
         });
       }
 
-      // 2. Pairwise repulsion among visible nodes
+      // 2. Pairwise repulsion among visible nodes (with singularity guard)
       const nLen = visibleNodes.length;
       for (let i = 0; i < nLen; i++) {
         const a = visibleNodes[i];
@@ -348,16 +357,18 @@
           let dx = b.x - a.x;
           let dy = b.y - a.y;
           let d2 = dx * dx + dy * dy;
-          if (d2 < 1) {
-            dx = (Math.random() - 0.5) * 2;
-            dy = (Math.random() - 0.5) * 2;
-            d2 = dx * dx + dy * dy;
+          if (!Number.isFinite(d2) || d2 < 4) {
+            const ang = ((i * 31 + j * 17) % 360) * (Math.PI / 180);
+            dx = Math.cos(ang) * 2;
+            dy = Math.sin(ang) * 2;
+            d2 = 4;
           }
           const minDist = a.radius + b.radius + 14;
           if (d2 < 18000) {
             const d = Math.sqrt(d2);
             const rep = (a.nodeType !== 'resource' && b.nodeType !== 'resource') ? 1600 : 260;
-            const force = (rep * alpha) / d2;
+            const effD2 = Math.max(196, d2);
+            const force = (rep * alpha) / effD2;
             const fx = (dx / d) * force;
             const fy = (dy / d) * force;
             a.vx -= fx;
@@ -400,17 +411,25 @@
         t.vy -= fy;
       });
 
-      // 4. Integrate velocity
+      // 4. Integrate velocity (clamped to prevent any numeric explosion)
+      const maxV = 28;
+      const maxPos = 1200;
       visibleNodes.forEach(n => {
         if (n === draggedNode || (n === selectedNode && autoFitMode === 'node')) {
           n.vx = 0;
           n.vy = 0;
           return;
         }
-        n.vx *= 0.80;
-        n.vy *= 0.80;
-        n.x += n.vx;
-        n.y += n.vy;
+        n.vx = Math.max(-maxV, Math.min(maxV, (n.vx || 0) * 0.80));
+        n.vy = Math.max(-maxV, Math.min(maxV, (n.vy || 0) * 0.80));
+        n.x = Math.max(-maxPos, Math.min(maxPos, (n.x || 0) + n.vx));
+        n.y = Math.max(-maxPos, Math.min(maxPos, (n.y || 0) + n.vy));
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) {
+          n.x = 0;
+          n.y = 0;
+          n.vx = 0;
+          n.vy = 0;
+        }
       });
     }
 
@@ -430,268 +449,299 @@
       ctx.closePath();
     }
 
+    function drawRoundedRectPath(x, y, w, h, r) {
+      const rad = Math.max(0, Math.min(r, w / 2, h / 2));
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(x, y, w, h, rad);
+      } else {
+        ctx.moveTo(x + rad, y);
+        ctx.arcTo(x + w, y, x + w, y + h, rad);
+        ctx.arcTo(x + w, y + h, x, y + h, rad);
+        ctx.arcTo(x, y + h, x, y, rad);
+        ctx.arcTo(x, y, x + w, y, rad);
+        ctx.closePath();
+      }
+    }
+
     function render() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1.0;
+      ctx.setLineDash([]);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
       ctx.save();
-      ctx.clearRect(0, 0, width * dpr, height * dpr);
-      ctx.scale(dpr, dpr);
+      try {
+        const safeScale = Number.isFinite(camScale) && camScale > 0.02 ? camScale : 1;
+        const safeCamX = Number.isFinite(camX) ? camX : 0;
+        const safeCamY = Number.isFinite(camY) ? camY : 0;
 
-      ctx.translate(width / 2, height / 2);
-      ctx.scale(camScale, camScale);
-      ctx.translate(camX, camY);
+        ctx.scale(dpr, dpr);
+        ctx.translate(width / 2, height / 2);
+        ctx.scale(safeScale, safeScale);
+        ctx.translate(safeCamX, safeCamY);
 
-      const focusNode = hoveredNode || selectedNode;
-      const focusNeighbors = focusNode ? neighborsMap.get(focusNode.id) : null;
-      const hasPath = highlightedPathNodes.size > 0;
+        const focusNode = hoveredNode || selectedNode;
+        const focusNeighbors = focusNode ? neighborsMap.get(focusNode.id) : null;
+        const hasPath = highlightedPathNodes.size > 0;
 
-      // Draw Edges
-      edges.forEach((e, idx) => {
-        const s = e.sourceNode;
-        const t = e.targetNode;
-        if (!isNodeVisible(s) || !isNodeVisible(t)) return;
+        // Draw Edges
+        edges.forEach((e, idx) => {
+          const s = e.sourceNode;
+          const t = e.targetNode;
+          if (!isNodeVisible(s) || !isNodeVisible(t)) return;
 
-        const isPathEdge = highlightedPathEdges.has(idx);
-        const isSidebarHoverEdge = sidebarHoveredNode && (
-          (selectedNode && ((s.id === selectedNode.id && t.id === sidebarHoveredNode.id) || (t.id === selectedNode.id && s.id === sidebarHoveredNode.id))) ||
-          (!selectedNode && (s.id === sidebarHoveredNode.id || t.id === sidebarHoveredNode.id))
-        );
-        const isHighlighted = isPathEdge || isSidebarHoverEdge || (focusNode && (s.id === focusNode.id || t.id === focusNode.id));
-        const searchActive = searchQuery.length > 0;
-        const sMatch = matchesSearch(s) && matchesSearch(t);
+          const isPathEdge = highlightedPathEdges.has(idx);
+          const isSidebarHoverEdge = sidebarHoveredNode && (
+            (selectedNode && ((s.id === selectedNode.id && t.id === sidebarHoveredNode.id) || (t.id === selectedNode.id && s.id === sidebarHoveredNode.id))) ||
+            (!selectedNode && (s.id === sidebarHoveredNode.id || t.id === sidebarHoveredNode.id))
+          );
+          const isHighlighted = isPathEdge || isSidebarHoverEdge || (focusNode && (s.id === focusNode.id || t.id === focusNode.id));
+          const searchActive = searchQuery.length > 0;
+          const sMatch = matchesSearch(s) && matchesSearch(t);
 
-        ctx.beginPath();
-        ctx.moveTo(s.x, s.y);
-        ctx.lineTo(t.x, t.y);
+          ctx.beginPath();
+          ctx.moveTo(s.x, s.y);
+          ctx.lineTo(t.x, t.y);
 
-        if (isSidebarHoverEdge) {
-          ctx.strokeStyle = '#22D3EE';
-          ctx.lineWidth = 4.2 / camScale;
-          ctx.setLineDash([]);
-        } else if (isPathEdge) {
-          ctx.strokeStyle = '#F59E0B';
-          ctx.lineWidth = 3.2 / camScale;
-          ctx.setLineDash([]);
-        } else if (isHighlighted) {
-          const dimOtherEdges = sidebarHoveredNode ? 0.35 : 1.0;
-          ctx.globalAlpha = dimOtherEdges;
-          ctx.strokeStyle = e.edgeType === 'in-group' ? s.color : t.color;
-          ctx.lineWidth = 2.0 / camScale;
-          ctx.setLineDash(e.edgeType === 'has-concept' ? [5, 4] : []);
-        } else {
-          const baseAlpha = (focusNode || hasPath || sidebarHoveredNode || (searchActive && !sMatch)) ? 0.05 : (e.edgeType === 'in-group' ? 0.28 : 0.16);
-          ctx.strokeStyle = e.edgeType === 'in-group' ? `rgba(148, 163, 184, ${baseAlpha})` : `rgba(167, 139, 250, ${baseAlpha})`;
-          ctx.lineWidth = 1.0 / camScale;
-          ctx.setLineDash([]);
-        }
-        ctx.stroke();
-        ctx.globalAlpha = 1.0;
+          if (isSidebarHoverEdge) {
+            ctx.strokeStyle = '#22D3EE';
+            ctx.lineWidth = 4.2 / safeScale;
+            ctx.setLineDash([]);
+          } else if (isPathEdge) {
+            ctx.strokeStyle = '#F59E0B';
+            ctx.lineWidth = 3.2 / safeScale;
+            ctx.setLineDash([]);
+          } else if (isHighlighted) {
+            const dimOtherEdges = sidebarHoveredNode ? 0.35 : 1.0;
+            ctx.globalAlpha = dimOtherEdges;
+            ctx.strokeStyle = e.edgeType === 'in-group' ? s.color : t.color;
+            ctx.lineWidth = 2.0 / safeScale;
+            ctx.setLineDash(e.edgeType === 'has-concept' ? [5, 4] : []);
+          } else {
+            const baseAlpha = (focusNode || hasPath || sidebarHoveredNode || (searchActive && !sMatch)) ? 0.05 : (e.edgeType === 'in-group' ? 0.28 : 0.16);
+            ctx.strokeStyle = e.edgeType === 'in-group' ? `rgba(148, 163, 184, ${baseAlpha})` : `rgba(167, 139, 250, ${baseAlpha})`;
+            ctx.lineWidth = 1.0 / safeScale;
+            ctx.setLineDash([]);
+          }
+          ctx.stroke();
+          ctx.globalAlpha = 1.0;
 
-        if (isSidebarHoverEdge) {
-          for (let b = 0; b < 2; b++) {
-            const tPulse = ((tickCount * 0.032 + b * 0.5) % 1);
+          if (isSidebarHoverEdge) {
+            for (let b = 0; b < 2; b++) {
+              const tPulse = ((tickCount * 0.032 + b * 0.5) % 1);
+              const px = s.x + (t.x - s.x) * tPulse;
+              const py = s.y + (t.y - s.y) * tPulse;
+              ctx.beginPath();
+              ctx.arc(px, py, 5 / safeScale, 0, Math.PI * 2);
+              ctx.fillStyle = '#FDE047';
+              ctx.fill();
+            }
+          } else if (isHighlighted && !sidebarHoveredNode) {
+            const tPulse = ((tickCount * 0.015 + (idx % 7) * 0.14) % 1);
             const px = s.x + (t.x - s.x) * tPulse;
             const py = s.y + (t.y - s.y) * tPulse;
             ctx.beginPath();
-            ctx.arc(px, py, 5 / camScale, 0, Math.PI * 2);
-            ctx.fillStyle = '#FDE047';
+            ctx.arc(px, py, 3 / safeScale, 0, Math.PI * 2);
+            ctx.fillStyle = isPathEdge ? '#FBBF24' : '#FFFFFF';
             ctx.fill();
           }
-        } else if (isHighlighted && !sidebarHoveredNode) {
-          const tPulse = ((tickCount * 0.015 + (idx % 7) * 0.14) % 1);
-          const px = s.x + (t.x - s.x) * tPulse;
-          const py = s.y + (t.y - s.y) * tPulse;
+        });
+        ctx.setLineDash([]);
+
+        const order = { resource: 1, concept: 2, group: 3 };
+        const sortedNodes = GRAPH_DATA.nodes.filter(isNodeVisible).sort((a, b) => order[a.nodeType] - order[b.nodeType]);
+
+        sortedNodes.forEach(n => {
+          const isSidebarTarget = sidebarHoveredNode && sidebarHoveredNode.id === n.id;
+          const isFocus = focusNode && focusNode.id === n.id;
+          const isNeighbor = focusNeighbors && focusNeighbors.has(n.id);
+          const isPathNode = highlightedPathNodes.has(n.id);
+          const isMatch = matchesSearch(n);
+
+          let dim = false;
+          if (hasPath && !isPathNode) dim = true;
+          else if (focusNode && !isFocus && !isNeighbor) dim = true;
+          if (searchQuery && !isMatch) dim = true;
+
+          // When hovering over a link in the right panel, dim all other sibling link nodes so the hovered node pops out immediately
+          if (sidebarHoveredNode && !isSidebarTarget && !isFocus) {
+            ctx.globalAlpha = dim ? 0.08 : 0.28;
+          } else {
+            ctx.globalAlpha = dim ? 0.14 : 1.0;
+          }
+
+          if (isFocus || isPathNode || (searchQuery && isMatch) || (n.groups && n.groups.length > 1 && !dim)) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius + 6, 0, Math.PI * 2);
+            ctx.fillStyle = isPathNode ? 'rgba(245, 158, 11, 0.35)' : (n.color + '44');
+            ctx.fill();
+          }
+
+          if (n.nodeType === 'concept') {
+            drawDiamond(n.x, n.y, n.radius);
+            ctx.fillStyle = n.color;
+            ctx.fill();
+            ctx.lineWidth = isFocus ? 3 : 1.8;
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.stroke();
+          } else {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+            ctx.fillStyle = n.color;
+            ctx.fill();
+            ctx.lineWidth = isFocus ? 3 : (n.nodeType === 'group' ? 2.2 : (n.groups && n.groups.length > 1 ? 2 : 1));
+            ctx.strokeStyle = (n.groups && n.groups.length > 1) ? '#FDE047' : '#0F172A';
+            ctx.stroke();
+          }
+
+          if (n.nodeType === 'group' || n.nodeType === 'concept') {
+            ctx.fillStyle = '#0F172A';
+            ctx.font = `bold ${n.nodeType === 'group' ? 11 : 9}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const countVal = n.nodeType === 'group' ? n.tabCount : n.linkCount;
+            ctx.fillText(String(countVal), n.x, n.y);
+          }
+
+          const showLabel =
+            !isSidebarTarget && (
+              n.nodeType === 'group' ||
+              n.nodeType === 'concept' ||
+              isFocus ||
+              isNeighbor ||
+              isPathNode ||
+              (searchQuery && isMatch) ||
+              safeScale > 1.35 ||
+              (n.groups && n.groups.length > 1)
+            );
+
+          if (showLabel) {
+            const fontSize = n.nodeType === 'group' ? 12 : (n.nodeType === 'concept' ? 11 : 10);
+            ctx.font = `${n.nodeType === 'resource' && !isFocus ? '500' : '700'} ${fontSize}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            const labelY = n.y + n.radius + 4;
+            const text = n.label.length > 34 && !isFocus ? n.label.slice(0, 32) + '…' : n.label;
+            const metrics = ctx.measureText(text);
+            const padX = 5, padY = 2;
+            ctx.fillStyle = isFocus ? '#F97316' : 'rgba(15, 23, 42, 0.85)';
+            drawRoundedRectPath(n.x - metrics.width / 2 - padX, labelY - padY, metrics.width + padX * 2, fontSize + padY * 2, 4);
+            ctx.fill();
+
+            ctx.fillStyle = isFocus ? '#0F172A' : (n.nodeType === 'concept' ? '#E9D5FF' : '#F8FAFC');
+            ctx.fillText(text, n.x, labelY);
+          }
+        });
+
+        // Draw Attention Beacon on top of everything when hovering a link/node in the right panel
+        if (sidebarHoveredNode && isNodeVisible(sidebarHoveredNode)) {
+          const sn = sidebarHoveredNode;
+          ctx.globalAlpha = 1.0;
+
+          // 1. Dual expanding radar/sonar rings
+          for (let ring = 0; ring < 2; ring++) {
+            const phase = ((tickCount * 0.03 + ring * 0.5) % 1);
+            const ringR = sn.radius * 1.8 + phase * 30;
+            ctx.beginPath();
+            ctx.arc(sn.x, sn.y, ringR, 0, Math.PI * 2);
+            ctx.strokeStyle = ring === 0
+              ? `rgba(34, 211, 238, ${(1 - phase) * 0.95})`
+              : `rgba(250, 204, 21, ${(1 - phase) * 0.95})`;
+            ctx.lineWidth = 3 / safeScale;
+            ctx.stroke();
+          }
+
+          // 2. Intense neon outer glow aura
+          const glowR = sn.radius * 2.9 + Math.sin(tickCount * 0.14) * 3;
+          const grad = ctx.createRadialGradient(sn.x, sn.y, sn.radius * 0.4, sn.x, sn.y, glowR);
+          grad.addColorStop(0, 'rgba(250, 204, 21, 0.95)');
+          grad.addColorStop(0.55, 'rgba(34, 211, 238, 0.55)');
+          grad.addColorStop(1, 'rgba(34, 211, 238, 0)');
           ctx.beginPath();
-          ctx.arc(px, py, 3 / camScale, 0, Math.PI * 2);
-          ctx.fillStyle = isPathEdge ? '#FBBF24' : '#FFFFFF';
+          ctx.arc(sn.x, sn.y, glowR, 0, Math.PI * 2);
+          ctx.fillStyle = grad;
           ctx.fill();
-        }
-      });
-      ctx.setLineDash([]);
 
-      const order = { resource: 1, concept: 2, group: 3 };
-      const sortedNodes = GRAPH_DATA.nodes.filter(isNodeVisible).sort((a, b) => order[a.nodeType] - order[b.nodeType]);
-
-      sortedNodes.forEach(n => {
-        const isSidebarTarget = sidebarHoveredNode && sidebarHoveredNode.id === n.id;
-        const isFocus = focusNode && focusNode.id === n.id;
-        const isNeighbor = focusNeighbors && focusNeighbors.has(n.id);
-        const isPathNode = highlightedPathNodes.has(n.id);
-        const isMatch = matchesSearch(n);
-
-        let dim = false;
-        if (hasPath && !isPathNode) dim = true;
-        else if (focusNode && !isFocus && !isNeighbor) dim = true;
-        if (searchQuery && !isMatch) dim = true;
-
-        // When hovering over a link in the right panel, dim all other sibling link nodes so the hovered node pops out immediately
-        if (sidebarHoveredNode && !isSidebarTarget && !isFocus) {
-          ctx.globalAlpha = dim ? 0.08 : 0.28;
-        } else {
-          ctx.globalAlpha = dim ? 0.14 : 1.0;
-        }
-
-        if (isFocus || isPathNode || (searchQuery && isMatch) || (n.groups && n.groups.length > 1 && !dim)) {
-          ctx.beginPath();
-          ctx.arc(n.x, n.y, n.radius + 6, 0, Math.PI * 2);
-          ctx.fillStyle = isPathNode ? 'rgba(245, 158, 11, 0.35)' : (n.color + '44');
+          // 3. Enlarged high-contrast node body (color-shifted to electric yellow + cyan ring + white core)
+          const beaconR = Math.max(13, sn.radius * 1.95);
+          if (sn.nodeType === 'concept') {
+            drawDiamond(sn.x, sn.y, beaconR);
+          } else {
+            ctx.beginPath();
+            ctx.arc(sn.x, sn.y, beaconR, 0, Math.PI * 2);
+          }
+          ctx.fillStyle = '#FACC15';
           ctx.fill();
-        }
-
-        if (n.nodeType === 'concept') {
-          drawDiamond(n.x, n.y, n.radius);
-          ctx.fillStyle = n.color;
-          ctx.fill();
-          ctx.lineWidth = isFocus ? 3 : 1.8;
-          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 3.5 / safeScale;
+          ctx.strokeStyle = '#22D3EE';
           ctx.stroke();
-        } else {
+
           ctx.beginPath();
-          ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
-          ctx.fillStyle = n.color;
+          ctx.arc(sn.x, sn.y, beaconR * 0.42, 0, Math.PI * 2);
+          ctx.fillStyle = '#FFFFFF';
           ctx.fill();
-          ctx.lineWidth = isFocus ? 3 : (n.nodeType === 'group' ? 2.2 : (n.groups && n.groups.length > 1 ? 2 : 1));
-          ctx.strokeStyle = (n.groups && n.groups.length > 1) ? '#FDE047' : '#0F172A';
-          ctx.stroke();
-        }
 
-        if (n.nodeType === 'group' || n.nodeType === 'concept') {
-          ctx.fillStyle = '#0F172A';
-          ctx.font = `bold ${n.nodeType === 'group' ? 11 : 9}px sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const countVal = n.nodeType === 'group' ? n.tabCount : n.linkCount;
-          ctx.fillText(String(countVal), n.x, n.y);
-        }
-
-        const showLabel =
-          !isSidebarTarget && (
-            n.nodeType === 'group' ||
-            n.nodeType === 'concept' ||
-            isFocus ||
-            isNeighbor ||
-            isPathNode ||
-            (searchQuery && isMatch) ||
-            camScale > 1.35 ||
-            (n.groups && n.groups.length > 1)
-          );
-
-        if (showLabel) {
-          const fontSize = n.nodeType === 'group' ? 12 : (n.nodeType === 'concept' ? 11 : 10);
-          ctx.font = `${n.nodeType === 'resource' && !isFocus ? '500' : '700'} ${fontSize}px sans-serif`;
+          // 4. High-contrast callout pill badge above/below the glowing node
+          const fontSize = 13;
+          ctx.font = `800 ${fontSize}px sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
-          const labelY = n.y + n.radius + 4;
-          const text = n.label.length > 34 && !isFocus ? n.label.slice(0, 32) + '…' : n.label;
-          const metrics = ctx.measureText(text);
-          const padX = 5, padY = 2;
-          ctx.fillStyle = isFocus ? '#F97316' : 'rgba(15, 23, 42, 0.85)';
-          ctx.beginPath();
-          ctx.roundRect(n.x - metrics.width / 2 - padX, labelY - padY, metrics.width + padX * 2, fontSize + padY * 2, 4);
+          const labelText = `★ ${sn.label}`;
+          const metrics = ctx.measureText(labelText);
+          const padX = 8, padY = 4;
+          const labelY = sn.y + beaconR + 7;
+
+          ctx.fillStyle = '#FACC15';
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2 / safeScale;
+          drawRoundedRectPath(sn.x - metrics.width / 2 - padX, labelY - padY, metrics.width + padX * 2, fontSize + padY * 2, 6);
           ctx.fill();
-
-          ctx.fillStyle = isFocus ? '#0F172A' : (n.nodeType === 'concept' ? '#E9D5FF' : '#F8FAFC');
-          ctx.fillText(text, n.x, labelY);
-        }
-      });
-
-      // Draw Attention Beacon on top of everything when hovering a link/node in the right panel
-      if (sidebarHoveredNode && isNodeVisible(sidebarHoveredNode)) {
-        const sn = sidebarHoveredNode;
-        ctx.globalAlpha = 1.0;
-
-        // 1. Dual expanding radar/sonar rings
-        for (let ring = 0; ring < 2; ring++) {
-          const phase = ((tickCount * 0.03 + ring * 0.5) % 1);
-          const ringR = sn.radius * 1.8 + phase * 30;
-          ctx.beginPath();
-          ctx.arc(sn.x, sn.y, ringR, 0, Math.PI * 2);
-          ctx.strokeStyle = ring === 0
-            ? `rgba(34, 211, 238, ${(1 - phase) * 0.95})`
-            : `rgba(250, 204, 21, ${(1 - phase) * 0.95})`;
-          ctx.lineWidth = 3 / camScale;
           ctx.stroke();
+
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(labelText, sn.x, labelY);
         }
-
-        // 2. Intense neon outer glow aura
-        const glowR = sn.radius * 2.9 + Math.sin(tickCount * 0.14) * 3;
-        const grad = ctx.createRadialGradient(sn.x, sn.y, sn.radius * 0.4, sn.x, sn.y, glowR);
-        grad.addColorStop(0, 'rgba(250, 204, 21, 0.95)');
-        grad.addColorStop(0.55, 'rgba(34, 211, 238, 0.55)');
-        grad.addColorStop(1, 'rgba(34, 211, 238, 0)');
-        ctx.beginPath();
-        ctx.arc(sn.x, sn.y, glowR, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
-        ctx.fill();
-
-        // 3. Enlarged high-contrast node body (color-shifted to electric yellow + cyan ring + white core)
-        const beaconR = Math.max(13, sn.radius * 1.95);
-        if (sn.nodeType === 'concept') {
-          drawDiamond(sn.x, sn.y, beaconR);
-        } else {
-          ctx.beginPath();
-          ctx.arc(sn.x, sn.y, beaconR, 0, Math.PI * 2);
-        }
-        ctx.fillStyle = '#FACC15';
-        ctx.fill();
-        ctx.lineWidth = 3.5 / camScale;
-        ctx.strokeStyle = '#22D3EE';
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(sn.x, sn.y, beaconR * 0.42, 0, Math.PI * 2);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fill();
-
-        // 4. High-contrast callout pill badge above/below the glowing node
-        const fontSize = 13;
-        ctx.font = `800 ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        const labelText = `★ ${sn.label}`;
-        const metrics = ctx.measureText(labelText);
-        const padX = 8, padY = 4;
-        const labelY = sn.y + beaconR + 7;
-
-        ctx.fillStyle = '#FACC15';
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 2 / camScale;
-        ctx.beginPath();
-        ctx.roundRect(sn.x - metrics.width / 2 - padX, labelY - padY, metrics.width + padX * 2, fontSize + padY * 2, 6);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#0F172A';
-        ctx.fillText(labelText, sn.x, labelY);
+      } finally {
+        ctx.globalAlpha = 1.0;
+        ctx.restore();
       }
-
-      ctx.globalAlpha = 1.0;
-      ctx.restore();
     }
 
     function loop() {
-      stepPhysics();
-      render();
       requestAnimationFrame(loop);
+      try {
+        stepPhysics();
+        render();
+      } catch (err) {
+        console.error('Graph loop error:', err);
+      }
     }
 
     // Dynamic ResizeObserver so any change in viewable screen size automatically refits the graph!
     function handleResize() {
       const rect = canvasContainer.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      width = rect.width;
-      height = rect.height;
+      const w = rect.width || canvasContainer.clientWidth || Math.max(320, window.innerWidth - 360);
+      const h = rect.height || canvasContainer.clientHeight || Math.max(420, window.innerHeight - 60);
+      width = Math.max(200, w);
+      height = Math.max(200, h);
       dpr = window.devicePixelRatio || 1;
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
       updateDynamicCameraTargets();
+      if (tickCount > 0) render();
     }
 
-    const resizeObserver = new ResizeObserver(() => {
-      handleResize();
-    });
-    resizeObserver.observe(canvasContainer);
+    if (typeof ResizeObserver !== 'undefined') {
+      const resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      resizeObserver.observe(canvasContainer);
+    }
     window.addEventListener('resize', handleResize);
     handleResize();
     zoomTo100PercentFill(true);
+    render();
 
     // Keyboard shortcut: Esc zooms out to 100% Fill when not inside modal
     window.addEventListener('keydown', (e) => {
