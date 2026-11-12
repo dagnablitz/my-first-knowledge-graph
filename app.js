@@ -61,7 +61,7 @@
     let isPanning = false;
     let panStartX = 0, panStartY = 0;
     let pointerDownPos = { x: 0, y: 0 };
-    let alpha = 0.35;
+    let alpha = 0.55;
     let tickCount = 0;
 
     function initPositions() {
@@ -186,7 +186,7 @@
       highlightedPathNodes.clear();
       highlightedPathEdges.clear();
       autoFitMode = 'all';
-      alpha = Math.max(alpha, 0.16);
+      alpha = Math.max(alpha, 0.28);
       updateDynamicCameraTargets();
       if (instant) {
         camX = targetCamX;
@@ -245,10 +245,10 @@
     function stepPhysics() {
       tickCount++;
 
-      // Smoothly and slowly interpolate camera toward target (deliberate, calming zoom & pan)
+      // Smoothly interpolate camera toward target (2x faster than previous ultra-slow setting)
       updateDynamicCameraTargets();
       if (!isPanning) {
-        const ease = 0.042;
+        const ease = 0.084;
         camX += (targetCamX - camX) * ease;
         camY += (targetCamY - camY) * ease;
         camScale += (targetCamScale - camScale) * ease;
@@ -256,13 +256,13 @@
       }
 
       if (alpha < 0.001 && !draggedNode) return;
-      alpha = alpha * 0.978;
+      alpha = alpha * 0.985;
       if (alpha < 0.001) alpha = 0;
 
       const visibleNodes = GRAPH_DATA.nodes.filter(isNodeVisible);
-      const calmFactor = Math.max(0.15, alpha);
+      const calmFactor = Math.max(0.25, alpha);
 
-      // 1. Gentle layout anchor forces
+      // 1. Gentle layout anchor forces (2x faster)
       if (layoutMode === 'groups') {
         const cols = 5;
         groupNodes.forEach((g, idx) => {
@@ -270,21 +270,21 @@
           const row = Math.floor(idx / cols);
           const tx = (col - 2) * 260;
           const ty = (row - 1) * 250;
-          g.vx += (tx - g.x) * 0.022 * calmFactor;
-          g.vy += (ty - g.y) * 0.022 * calmFactor;
+          g.vx += (tx - g.x) * 0.044 * calmFactor;
+          g.vy += (ty - g.y) * 0.044 * calmFactor;
         });
         conceptNodes.forEach((c, idx) => {
           const angle = (idx / conceptNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 560;
           const ty = Math.sin(angle) * 420;
-          c.vx += (tx - c.x) * 0.015 * calmFactor;
-          c.vy += (ty - c.y) * 0.015 * calmFactor;
+          c.vx += (tx - c.x) * 0.030 * calmFactor;
+          c.vy += (ty - c.y) * 0.030 * calmFactor;
         });
         resourceNodes.forEach((r) => {
           const g = nodeMap.get(r.groups[0]);
           if (g) {
-            r.vx += (g.x - r.x) * 0.018 * calmFactor;
-            r.vy += (g.y - r.y) * 0.018 * calmFactor;
+            r.vx += (g.x - r.x) * 0.036 * calmFactor;
+            r.vy += (g.y - r.y) * 0.036 * calmFactor;
           }
         });
       } else if (layoutMode === 'concepts') {
@@ -294,22 +294,22 @@
           const row = Math.floor(idx / cols);
           const tx = (col - 2) * 260;
           const ty = (row - 0.5) * 280;
-          c.vx += (tx - c.x) * 0.022 * calmFactor;
-          c.vy += (ty - c.y) * 0.022 * calmFactor;
+          c.vx += (tx - c.x) * 0.044 * calmFactor;
+          c.vy += (ty - c.y) * 0.044 * calmFactor;
         });
         groupNodes.forEach((g, idx) => {
           const angle = (idx / groupNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 580;
           const ty = Math.sin(angle) * 430;
-          g.vx += (tx - g.x) * 0.015 * calmFactor;
-          g.vy += (ty - c.y) * 0.015 * calmFactor;
+          g.vx += (tx - g.x) * 0.030 * calmFactor;
+          g.vy += (ty - c.y) * 0.030 * calmFactor;
         });
         resourceNodes.forEach(r => {
           if (r.concepts && r.concepts.length > 0) {
             const c = nodeMap.get(r.concepts[0]);
             if (c) {
-              r.vx += (c.x - r.x) * 0.018 * calmFactor;
-              r.vy += (c.y - r.y) * 0.018 * calmFactor;
+              r.vx += (c.x - r.x) * 0.036 * calmFactor;
+              r.vy += (c.y - r.y) * 0.036 * calmFactor;
             }
           }
         });
@@ -318,20 +318,20 @@
           const angle = (i / groupNodes.length) * Math.PI * 2 - Math.PI / 2;
           const tx = Math.cos(angle) * 350;
           const ty = Math.sin(angle) * 350;
-          g.vx += (tx - g.x) * 0.007 * calmFactor;
-          g.vy += (ty - g.y) * 0.007 * calmFactor;
+          g.vx += (tx - g.x) * 0.014 * calmFactor;
+          g.vy += (ty - g.y) * 0.014 * calmFactor;
         });
         conceptNodes.forEach((c, i) => {
           const angle = (i / conceptNodes.length) * Math.PI * 2;
           const tx = Math.cos(angle) * 140;
           const ty = Math.sin(angle) * 140;
-          c.vx += (tx - c.x) * 0.008 * calmFactor;
-          c.vy += (ty - c.y) * 0.008 * calmFactor;
+          c.vx += (tx - c.x) * 0.016 * calmFactor;
+          c.vy += (ty - c.y) * 0.016 * calmFactor;
         });
       }
 
-      // Focused satellite orbit: when a Tab Group or Concept Bridge hub is selected, slowly and gently
-      // guide its 1-hop resource links into a calm, readable constellation around it.
+      // Focused satellite orbit: when a Tab Group or Concept Bridge hub is selected, smoothly
+      // guide its 1-hop resource links into a readable constellation around it (2x faster).
       if (selectedNode && autoFitMode === 'node' && (selectedNode.nodeType === 'group' || selectedNode.nodeType === 'concept')) {
         const nbIds = Array.from(neighborsMap.get(selectedNode.id) || []);
         const resourceNbIds = nbIds.filter(id => {
@@ -345,12 +345,12 @@
           const angle = (i / Math.max(1, resourceNbIds.length)) * Math.PI * 2 - Math.PI / 2;
           const tx = selectedNode.x + Math.cos(angle) * orbitRadius;
           const ty = selectedNode.y + Math.sin(angle) * orbitRadius;
-          nb.vx += (tx - nb.x) * 0.032 * calmFactor;
-          nb.vy += (ty - nb.y) * 0.032 * calmFactor;
+          nb.vx += (tx - nb.x) * 0.064 * calmFactor;
+          nb.vy += (ty - nb.y) * 0.064 * calmFactor;
         });
       }
 
-      // 2. Gentle pairwise repulsion among visible nodes (with singularity guard)
+      // 2. Smooth pairwise repulsion among visible nodes (with singularity guard)
       const nLen = visibleNodes.length;
       for (let i = 0; i < nLen; i++) {
         const a = visibleNodes[i];
@@ -368,8 +368,8 @@
           const minDist = a.radius + b.radius + 14;
           if (d2 < 18000) {
             const d = Math.sqrt(d2);
-            const rep = (a.nodeType !== 'resource' && b.nodeType !== 'resource') ? 680 : 110;
-            const effD2 = Math.max(320, d2);
+            const rep = (a.nodeType !== 'resource' && b.nodeType !== 'resource') ? 1150 : 190;
+            const effD2 = Math.max(260, d2);
             const force = (rep * alpha) / effD2;
             const fx = (dx / d) * force;
             const fy = (dy / d) * force;
@@ -380,7 +380,7 @@
           }
           if (d2 < minDist * minDist) {
             const d = Math.sqrt(d2);
-            const overlap = (minDist - d) * 0.065 * calmFactor;
+            const overlap = (minDist - d) * 0.13 * calmFactor;
             const ox = (dx / d) * overlap;
             const oy = (dy / d) * overlap;
             a.vx -= ox;
@@ -391,7 +391,7 @@
         }
       }
 
-      // 3. Soft edge spring forces
+      // 3. Smooth edge spring forces (2x faster)
       edges.forEach(e => {
         const s = e.sourceNode;
         const t = e.targetNode;
@@ -403,7 +403,7 @@
         const dy = t.y - s.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
         const targetDist = e.edgeType === 'in-group' ? 78 : 110;
-        const k = e.edgeType === 'in-group' ? 0.010 : 0.0045;
+        const k = e.edgeType === 'in-group' ? 0.020 : 0.009;
         const f = (d - targetDist) * k * alpha;
         const fx = (dx / d) * f;
         const fy = (dy / d) * f;
@@ -413,8 +413,8 @@
         t.vy -= fy;
       });
 
-      // 4. Integrate velocity with high damping & low speed cap for calm, deliberate motion
-      const maxV = 3.2;
+      // 4. Integrate velocity (2x faster peak speed while still smooth and controlled)
+      const maxV = 6.4;
       const maxPos = 1200;
       visibleNodes.forEach(n => {
         if (n === draggedNode || (n === selectedNode && autoFitMode === 'node')) {
@@ -422,8 +422,8 @@
           n.vy = 0;
           return;
         }
-        n.vx = Math.max(-maxV, Math.min(maxV, (n.vx || 0) * 0.68));
-        n.vy = Math.max(-maxV, Math.min(maxV, (n.vy || 0) * 0.68));
+        n.vx = Math.max(-maxV, Math.min(maxV, (n.vx || 0) * 0.74));
+        n.vy = Math.max(-maxV, Math.min(maxV, (n.vy || 0) * 0.74));
         if (Math.abs(n.vx) < 0.012) n.vx = 0;
         if (Math.abs(n.vy) < 0.012) n.vy = 0;
         n.x = Math.max(-maxPos, Math.min(maxPos, (n.x || 0) + n.vx));
@@ -533,8 +533,8 @@
           ctx.globalAlpha = 1.0;
 
           if (isSidebarHoverEdge) {
-            // Single slow, calming light particle gliding along the edge (4.5s per traversal)
-            const tPulse = (timeSec * 0.22) % 1;
+            // Single smooth light particle gliding along the edge (2x faster: ~2.25s per traversal)
+            const tPulse = (timeSec * 0.44) % 1;
             const px = s.x + (t.x - s.x) * tPulse;
             const py = s.y + (t.y - s.y) * tPulse;
             ctx.beginPath();
@@ -542,8 +542,8 @@
             ctx.fillStyle = '#FDE047';
             ctx.fill();
           } else if (isHighlighted && !sidebarHoveredNode) {
-            // Very slow, tranquil drift along highlighted edges (~6.7s per traversal)
-            const tPulse = (timeSec * 0.15 + (idx % 7) * 0.14) % 1;
+            // Smooth drift along highlighted edges (2x faster: ~3.3s per traversal)
+            const tPulse = (timeSec * 0.30 + (idx % 7) * 0.14) % 1;
             const px = s.x + (t.x - s.x) * tPulse;
             const py = s.y + (t.y - s.y) * tPulse;
             ctx.beginPath();
@@ -644,12 +644,12 @@
           const sn = sidebarHoveredNode;
           ctx.globalAlpha = 1.0;
 
-          // 1. Slow, calming dual ripples (5.5-second cycle with smooth sine fade-in/out)
+          // 1. Smooth dual ripples (2x faster: ~2.75-second cycle with sine fade-in/out)
           for (let ring = 0; ring < 2; ring++) {
-            const phase = (timeSec * 0.18 + ring * 0.5) % 1;
+            const phase = (timeSec * 0.36 + ring * 0.5) % 1;
             const easedPhase = Math.sin(phase * Math.PI * 0.5);
             const ringR = sn.radius * 1.6 + easedPhase * 26;
-            const ringAlpha = Math.sin(phase * Math.PI) * 0.72;
+            const ringAlpha = Math.sin(phase * Math.PI) * 0.76;
             ctx.beginPath();
             ctx.arc(sn.x, sn.y, ringR, 0, Math.PI * 2);
             ctx.strokeStyle = ring === 0
@@ -659,8 +659,8 @@
             ctx.stroke();
           }
 
-          // 2. Soft, meditative breathing glow aura (~5-second breath cycle)
-          const glowR = sn.radius * 2.8 + Math.sin(timeSec * 1.25) * 2.0;
+          // 2. Smooth breathing glow aura (2x faster: ~2.5-second breath cycle)
+          const glowR = sn.radius * 2.8 + Math.sin(timeSec * 2.5) * 2.4;
           const grad = ctx.createRadialGradient(sn.x, sn.y, sn.radius * 0.4, sn.x, sn.y, glowR);
           grad.addColorStop(0, 'rgba(250, 204, 21, 0.90)');
           grad.addColorStop(0.55, 'rgba(34, 211, 238, 0.48)');
@@ -880,7 +880,7 @@
       }
       selectedNode = n;
       autoFitMode = 'node';
-      alpha = Math.max(alpha, 0.25);
+      alpha = Math.max(alpha, 0.45);
       updateDynamicCameraTargets();
       updateSelectionUI(n);
       updateZoomReadout();
@@ -1157,7 +1157,7 @@
     document.querySelectorAll('.layout-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         layoutMode = btn.dataset.layout;
-        alpha = 0.45;
+        alpha = 0.70;
         if (autoFitMode !== 'node') autoFitMode = 'all';
         document.querySelectorAll('.layout-btn').forEach(b => {
           const active = b === btn;
@@ -1171,16 +1171,16 @@
     document.getElementById('btn-toggle-links').addEventListener('click', (e) => {
       showAllLinks = !showAllLinks;
       e.currentTarget.textContent = showAllLinks ? 'View: All Nodes' : 'View: Hubs + Selected';
-      alpha = 0.35;
+      alpha = 0.55;
       updateDynamicCameraTargets();
     });
 
     document.getElementById('btn-boing').addEventListener('click', () => {
       GRAPH_DATA.nodes.forEach(n => {
-        n.vx += (Math.random() - 0.5) * 3.5;
-        n.vy += (Math.random() - 0.5) * 3.5;
+        n.vx += (Math.random() - 0.5) * 7.0;
+        n.vy += (Math.random() - 0.5) * 7.0;
       });
-      alpha = 0.40;
+      alpha = 0.65;
     });
 
     document.getElementById('btn-fit-100').addEventListener('click', () => zoomTo100PercentFill(false));
